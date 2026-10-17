@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>How Does a Hypercar Get Pushed Toward the Road?</title>
+<style>
+:root{--bg:#0b0d10;--panel:#14181d;--line:#262c34;--tx:#e8ecf0;--mut:#8b95a1;--amb:#ffb454;--cy:#4fd1ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden;overscroll-behavior:none}
+main{max-width:640px;margin:0 auto;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.stage{position:relative;margin:0 auto;aspect-ratio:9/16;height:min(76dvh,calc(100vw*16/9));max-width:100%;background:#000;border-radius:10px;overflow:hidden}
+#view{width:100%;height:100%;display:block;touch-action:pan-y}
+#load{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#0b0d10;padding:18px;text-align:center;font-size:13px;color:var(--mut)}
+#load b{color:var(--tx);font-size:15px}.bar{width:70%;height:4px;background:var(--line);border-radius:2px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--cy)}
+#err{color:#ff8a80;white-space:pre-wrap;text-align:left;font:11px/1.4 ui-monospace,monospace;max-height:40%;overflow:auto}
+.ctl{padding:10px 8px 24px;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select{font:inherit;color:var(--tx);background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:44px;padding:0 14px}
+button[aria-pressed=true]{border-color:var(--cy);color:var(--cy)}button.pri{background:var(--tx);color:#000;font-weight:700;min-width:84px}
+button.rec[aria-pressed=true]{border-color:#ff5252;color:#ff5252}
+input[type=range]{flex:1;min-width:120px;height:44px;accent-color:var(--cy)}
+#tm{font-variant-numeric:tabular-nums;color:var(--mut);min-width:96px;text-align:right}
+#scn{font-size:12px;letter-spacing:.08em;color:var(--amb);text-transform:uppercase}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}.chips button{min-width:44px;padding:0 10px;flex:none}
+details{border:1px solid var(--line);border-radius:10px;padding:0 10px}summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--mut)}
+details .row{padding:6px 0 10px}
+#rs{color:var(--mut);font-size:12px}
+#dbg{display:none;margin:0;padding:8px;background:#000;border:1px solid var(--line);border-radius:8px;font:11px/1.35 ui-monospace,monospace;color:#9fd;white-space:pre-wrap;max-height:260px;overflow:auto}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
+</head>
+<body>
+<main>
+<div class="stage"><canvas id="view"></canvas>
+<div id="load"><b>Loading Koenigsegg Jesko Attack…</b><div class="bar"><i id="lb"></i></div><div id="ls">starting</div><div id="err"></div></div></div>
+<div class="ctl">
+ <div class="row"><button id="play" class="pri">Play</button><button id="restart">Restart</button><span id="scn">Scene 01</span><span id="tm">0:00.0 / 1:16.0</span></div>
+ <div class="row"><input id="scrub" type="range" min="0" max="76000" step="10" value="0" aria-label="Timeline"></div>
+ <div class="chips" id="chips"></div>
+ <details open><summary>Layers &amp; camera</summary><div class="row">
+  <button data-k="flow" aria-pressed="true">Airflow</button><button data-k="pressure" aria-pressed="true">Pressure</button>
+  <button data-k="vec" aria-pressed="true">Downforce vectors</button><button data-k="label" aria-pressed="true">Labels</button>
+  <button data-k="cut" aria-pressed="true">Underbody cutaway</button><button data-k="simple" aria-pressed="false">Simple explainer</button>
+  <button data-k="inspect" aria-pressed="false">Inspect / orbit</button><button id="rcam">Reset camera</button></div></details>
+ <details><summary>Sound, quality &amp; recording</summary><div class="row">
+  <button id="snd" aria-pressed="false">Sound off</button><input id="vol" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Volume">
+  <button id="say" aria-pressed="false">Voice (browser TTS)</button></div>
+  <div class="row"><select id="qual" aria-label="Render quality"><option value="mobile">Quality: Mobile 540×960</option><option value="balanced">Quality: Balanced 720×1280</option><option value="high">Quality: High 1080×1920</option></select>
+  <select id="spd" aria-label="Preview speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></div>
+  <div class="row"><select id="rq" aria-label="Recording size"><option value="high">Record 1080×1920</option><option value="mobile">Record 540×960 (lite)</option></select>
+  <button id="rec" class="rec" aria-pressed="false">Record video</button></div><div id="rs">Recording idle.</div></details>
+ <pre id="dbg"></pre>
+</div>
+</main>
+<script type="module">
+import * as THREE from 'three';
+import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {RGBELoader} from 'three/addons/loaders/RGBELoader.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+/* ================= CONSTANTS & MATH ================= */
+const DUR=76, TILE=4, TARGET_L=4.61; // Jesko Attack ≈ 4.61 m long (used only to scale the imported model)
+const FILES={car:'FINAL_MODEL_AT.fbx',hdr:'bloem_hill_01_2k.hdr',road:'ImageToStl_com_asphalt_pit_lane_1k_gltf.glb'};
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x)), lerp=(a,b,t)=>a+(b-a)*t;
+const sst=x=>{x=clamp(x,0,1);return x*x*(3-2*x)};
+const win=(t,a,b,c,d)=>sst((t-a)/(b-a))*(1-sst((t-c)/(d-c)));   // smooth in/out window
+const $=id=>document.getElementById(id), V3=(x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+const fmt=t=>{const m=Math.floor(t/60),s=t-m*60;return m+':'+(s<10?'0':'')+s.toFixed(1)};
+
+/* ================= SCENE / NARRATION DATA ================= */
+const SCENES=[
+{n:'The Hook',t0:0,t1:6,say:'At high speed, the Jesko Attack turns the air around it into grip.',cues:[[.2,3.2,'At high speed, the Jesko Attack'],[3.2,6,'turns the air around it into grip.']],simple:'Fast-moving air can press a car into the road.'},
+{n:'The Airflow',t0:6,t1:13,say:"Air follows the car's shape, but the flow also creates pressure differences.",cues:[[6.2,9.4,"Air follows the car's shape,"],[9.4,12.9,'but the flow also creates pressure differences.']],simple:'Moving air pushes harder on some places than others.'},
+{n:'The Rear Wing',t0:13,t1:21,say:'Its double-profile rear wing redirects air; the reaction creates a downward force on the car.',cues:[[13.2,16.8,'Its double-profile rear wing redirects air;'],[16.8,20.9,'the reaction creates a downward force on the car.']],simple:'The wing bends air upward, so the air pushes the car down.'},
+{n:'The Front Aero',t0:21,t1:29,say:'Up front, the long splitter and active underbody flaps manage airflow and help balance the nose.',cues:[[21.2,25,'Up front, the long splitter and active underbody flaps'],[25,28.9,'manage airflow and help balance the nose.']],simple:'The nose guides air so the front tires keep their grip.'},
+{n:'Underbody & Diffuser',t0:29,t1:37,say:'Under the car, shaped surfaces and diffusers guide air and manage how it expands behind the floor.',cues:[[29.2,33,'Under the car, shaped surfaces and diffusers guide air'],[33,36.9,'and manage how it expands behind the floor.']],simple:'Air under the car is guided, then released smoothly at the back.'},
+{n:'Balancing the Car',t0:37,t1:44,say:'Together, these parts balance front and rear downforce—not just produce as much as possible.',cues:[[37.2,40.6,'Together, these parts balance front and rear downforce—'],[40.6,43.9,'not just produce as much as possible.']],simple:'Front and rear should be pressed down in balance.'},
+{n:'Why Speed Matters',t0:44,t1:51,say:'And speed changes everything. Aerodynamic force grows roughly with the square of airspeed.',cues:[[44.2,46.6,'And speed changes everything.'],[46.6,50.9,'Aerodynamic force grows roughly with the square of airspeed.']],simple:'Twice the speed gives about four times the aerodynamic force.'},
+{n:'The Real Numbers',t0:51,t1:60,say:'Koenigsegg lists 700 kilograms of downforce at 250 kilometers per hour, and 1,000 at 290.',cues:[[51.2,55.6,'Koenigsegg lists 700 kilograms of downforce at 250 kilometers per hour,'],[55.6,59.8,'and 1,000 at 290.']],simple:'These are official numbers published by Koenigsegg.'},
+{n:'The Maximum',t0:60,t1:68,say:'Koenigsegg lists a maximum of 1,400 kilograms of downforce—a force expressed in kilogram-equivalent terms.',cues:[[60.2,64,'Koenigsegg lists a maximum of 1,400 kilograms of downforce—'],[64,67.9,'a force expressed in kilogram-equivalent terms.']],simple:'"kg" here describes a push, not extra weight.'},
+{n:'The Payoff',t0:68,t1:76,say:'That extra load can help the tires generate grip through corners—but only when the aero, tires, and track cooperate.',cues:[[68.2,72,'That extra load can help the tires generate grip through corners—'],[72,76,'but only when the aero, tires, and track cooperate.']],simple:'More push on the tires can mean more grip, if everything cooperates.'}];
+const sceneAt=t=>{for(let i=SCENES.length-1;i>=0;i--) if(t>=SCENES[i].t0) return i;return 0};
+
+/* ================= MASTER TIMELINE (pure functions of T) ================= */
+const speedMs=t=>{let v=50;v=lerp(v,27.8,sst((t-40)/4.5));v=lerp(v,55.6,sst((t-47)/2.5));v=lerp(v,46,sst((t-62)/5));return v}; // illustrative m/s
+const headingAt=t=>1.1*sst((t-67.5)/8);                 // sweeping left corner in scene 10
+const flowRate=t=>0.2*Math.pow(speedMs(t)/50,.9);       // visual flow cycles/s
+const TL=(()=>{const dt=1/60,n=Math.ceil(DUR*60)+3,o={dt,n,dist:new Float64Array(n),x:new Float64Array(n),z:new Float64Array(n),h:new Float64Array(n),flow:new Float64Array(n)};
+ for(let i=0;i<n;i++){const t=i*dt,v=speedMs(t),h=headingAt(t);o.h[i]=h;if(i){o.dist[i]=o.dist[i-1]+v*dt;o.x[i]=o.x[i-1]+Math.cos(h)*v*dt;o.z[i]=o.z[i-1]-Math.sin(h)*v*dt;o.flow[i]=o.flow[i-1]+flowRate(t)*dt}}return o})();
+const samp=(a,t)=>{const f=clamp(t,0,DUR)*60,i=Math.floor(f);return lerp(a[i],a[i+1],f-i)};
+const carPose=t=>({x:samp(TL.x,t),z:samp(TL.z,t),h:samp(TL.h,t),dist:samp(TL.dist,t),flow:samp(TL.flow,t)});
+
+// Camera keys in car-local units of car length L: [time, [forward, up, right], target, vertical fov]
+const K=[[0,[.55,.045,1.05],[.1,.07,0],50],[3,[-.05,.07,.95],[0,.08,0],48],[6,[-.6,.12,.95],[-.25,.1,0],46],[9.5,[.1,.13,1.35],[0,.1,0],42],
+[13,[-.55,.2,1.2],[-.35,.14,0],40],[15,[-.85,.2,.62],[-.38,.19,0],38],[18,[-1,.26,.4],[-.4,.2,0],34],[21,[-.9,.22,-.55],[-.35,.15,0],38],
+[22.6,[0,.1,-1.3],[.1,.08,0],42],[24.2,[.95,.06,-.6],[.4,.05,0],50],[26.5,[.8,.04,-.35],[.45,.035,0],55],[29,[.6,.05,.75],[.2,.04,0],50],
+[31.5,[0,.03,.95],[0,.03,0],40],[34,[-.75,.04,.55],[-.35,.04,0],42],[37,[-1,.12,.2],[-.4,.05,0],44],[39.2,[0,.12,2.2],[0,.1,0],36],
+[44,[.05,.12,2.1],[0,.1,0],36],[46,[.5,.2,1.6],[0,.1,0],40],[51,[.95,.2,1],[0,.1,0],40],[58.5,[.85,.22,1.15],[0,.1,0],40],[60,[.86,.22,1.15],[0,.1,0],40],
+[61.5,[-1.05,.12,.9],[-.3,.15,0],42],[64,[-1.2,.1,.35],[-.4,.18,0],42],[66.5,[-1.25,.12,-.4],[-.35,.16,0],40],[68.5,[-.3,.15,1.8],[0,.1,0],40],
+[72,[.6,.16,1.6],[0,.1,0],40],[76,[.95,.18,.95],[.05,.1,0],38]];
+const cr=(a,b,c,d,s)=>.5*(2*b+(-a+c)*s+(2*a-5*b+4*c-d)*s*s+(-a+3*b-3*c+d)*s*s*s);
+function camKey(t){t=clamp(t,0,DUR);let i=0;while(i<K.length-2&&t>=K[i+1][0])i++;
+ const k0=K[Math.max(i-1,0)],k1=K[i],k2=K[i+1],k3=K[Math.min(i+2,K.length-1)],s=clamp((t-k1[0])/(k2[0]-k1[0]),0,1),o={p:[0,0,0],q:[0,0,0],fov:0};
+ for(let j=0;j<3;j++){o.p[j]=cr(k0[1][j],k1[1][j],k2[1][j],k3[1][j],s);o.q[j]=cr(k0[2][j],k1[2][j],k2[2][j],k3[2][j],s)}
+ o.fov=cr(k0[3],k1[3],k2[3],k3[3],s);return o}
+
+/* ================= GLOBAL STATE ================= */
+const S={T:0,playing:false,speed:1,tRef:0,wall0:0,narr:false,inspect:false,sceneIdx:-1,scrubbing:false};
+const LAY={flow:1,pressure:1,vec:1,label:1,cut:1,simple:0};
+const diag={lines:[],errors:[]}; const rec={on:false};
+const Q={mobile:{w:540,h:960,shadow:1024,k:8},balanced:{w:720,h:1280,shadow:2048,k:11},high:{w:1080,h:1920,shadow:2048,k:14}};
+let quality=(/Android|iPhone|iPad/i.test(navigator.userAgent)||matchMedia('(pointer:coarse)').matches)?'mobile':'balanced';
+let car=null; // filled after load: {root,norm,L,W,H,...}
+const D=(...a)=>{diag.lines.push(a.join(' '));};
+
+/* ================= RENDERER, SCENE, LIGHTS ================= */
+const view=$('view'), ctx2=view.getContext('2d');
+const glc=document.createElement('canvas');
+const renderer=new THREE.WebGLRenderer({canvas:glc,antialias:true,powerPreference:'high-performance'});
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.95;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();scene.fog=new THREE.Fog(0xaab6c4,90,480);
+const camera=new THREE.PerspectiveCamera(45,9/16,.05,1500);
+const sun=new THREE.DirectionalLight(0xfff1de,2.4);sun.castShadow=true;sun.shadow.bias=-.0004;sun.shadow.normalBias=.02;
+Object.assign(sun.shadow.camera,{left:-6,right:6,top:6,bottom:-6,near:1,far:40});sun.shadow.camera.updateProjectionMatrix();scene.add(sun,sun.target);
+const SUN_OFF=V3(-7,11,6);
+const controls=new OrbitControls(camera,view);controls.enabled=false;controls.enableDamping=true;controls.dampingFactor=.08;controls.maxPolarAngle=Math.PI*.495;
+
+function applyQuality(name){quality=name;const q=Q[name];view.width=q.w;view.height=q.h;renderer.setPixelRatio(1);renderer.setSize(q.w,q.h,false);
+ sun.shadow.mapSize.set(q.shadow,q.shadow);if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null}
+ if(fx){fx.setRes(q.w,q.h);fx.setDensity(q.k)}$('qual').value=name}
+
+/* ================= ASSET LOADING ================= */
+const mgr=new THREE.LoadingManager();mgr.onError=u=>{diag.errors.push('FAILED: '+u);$('err').textContent+='Failed to load: '+u+'\n'};
+const prog={car:0,hdr:0,road:0};
+const setProg=(k,v,msg)=>{prog[k]=v;$('lb').style.width=(100*(prog.car*.7+prog.hdr*.15+prog.road*.15)).toFixed(0)+'%';if(msg)$('ls').textContent=msg};
+const loadP=(L,url,key,msg)=>new Promise((res,rej)=>L.load(url,res,e=>{if(e.total)setProg(key,e.loaded/e.total,msg)},rej));
+
+async function loadAssets(){
+ setProg('car',0,'Loading Jesko Attack FBX (16 MB)…');
+ const fbx=new FBXLoader(mgr);fbx.setResourcePath('./');
+ const model=await loadP(fbx,FILES.car,'car','Loading Jesko Attack FBX (16 MB)…');setProg('car',1);
+ setProg('hdr',0,'Loading HDRI…');
+ const hdr=await loadP(new RGBELoader(mgr),FILES.hdr,'hdr','Loading HDRI…');setProg('hdr',1);
+ setProg('road',0,'Loading asphalt…');
+ const glb=await loadP(new GLTFLoader(mgr),FILES.road,'road','Loading asphalt…');setProg('road',1);
+ return {model,hdr,glb};
+}
+
+/* ================= ENVIRONMENT & GROUND ================= */
+function setupEnvironment(hdr){hdr.mapping=THREE.EquirectangularReflectionMapping;
+ const pm=new THREE.PMREMGenerator(renderer);const rt=pm.fromEquirectangular(hdr);scene.environment=rt.texture;scene.background=hdr;scene.backgroundIntensity=.9;scene.environmentIntensity=1;pm.dispose();
+ D('HDRI loaded:',hdr.image.width+'x'+hdr.image.height,'(equirectangular RGBE) → PMREM environment + background');}
+let ground=null;
+function setupGround(glb){
+ let tex=null;glb.scene.traverse(o=>{if(o.isMesh&&!tex)tex=o.material});
+ // The supplied GLB is a material-preview sphere (53,936 verts). Only its PBR textures are used, on a large tiled plane.
+ const m=new THREE.MeshStandardMaterial({color:0xbdbdbd,roughness:1,metalness:0});const an=renderer.capabilities.getMaxAnisotropy(),rep=600/TILE,names=[];
+ if(tex){for(const [k,dst] of [['map','map'],['normalMap','normalMap'],['roughnessMap','roughnessMap']]){const t=tex[k];if(t){t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(rep,rep);t.anisotropy=an;m[dst]=t;names.push(k)}}}
+ D('Asphalt GLB textures used:',names.join(', ')||'none (flat colour fallback)','| GLB mesh itself unused (it is a preview sphere)');
+ ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600),m);ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);}
+
+/* ================= CAR: MATERIALS, NORMALIZATION, MEASUREMENT ================= */
+function convertMat(m){const n=(m.name||'').toLowerCase(),map=m.map||null,nm=m.normalMap||null;let r;
+ if(/paint/.test(n))r=new THREE.MeshPhysicalMaterial({color:0xc4c9d1,metalness:.85,roughness:.3,clearcoat:1,clearcoatRoughness:.06});
+ else if(/glass_light/.test(n))r=new THREE.MeshPhysicalMaterial({color:0xcfd8e0,metalness:0,roughness:.05,transparent:true,opacity:.35});
+ else if(/glass/.test(n))r=new THREE.MeshPhysicalMaterial({color:0x080c10,metalness:0,roughness:.04,transparent:true,opacity:.42,envMapIntensity:1.6});
+ else if(/carbon/.test(n))r=new THREE.MeshStandardMaterial({color:0xffffff,map,normalMap:nm,metalness:.35,roughness:.38});
+ else if(/tyre|tire/.test(n))r=new THREE.MeshStandardMaterial({color:0xffffff,map,normalMap:nm,metalness:0,roughness:.88});
+ else if(/rim|brake/.test(n))r=new THREE.MeshStandardMaterial({color:0xffffff,map,normalMap:nm,metalness:.9,roughness:.3});
+ else if(/mirror|exhaust|tinfoil/.test(n))r=new THREE.MeshStandardMaterial({color:0xdddddd,metalness:1,roughness:.15});
+ else if(/light|logo/.test(n))r=new THREE.MeshStandardMaterial({color:0xffffff,map,normalMap:nm,metalness:.2,roughness:.3});
+ else r=new THREE.MeshStandardMaterial({color:0xffffff,map,normalMap:nm,metalness:.25,roughness:.65});
+ r.name=m.name;r.side=m.side===THREE.DoubleSide?THREE.DoubleSide:THREE.FrontSide;r.userData.baseOpacity=r.opacity;r.userData.baseTransp=r.transparent;return r}
+function adjustMaterials(root){const cache=new Map();let meshes=0;const mats=[];
+ root.traverse(o=>{if(!o.isMesh)return;meshes++;o.castShadow=true;o.receiveShadow=true;o.frustumCulled=false;
+  const arr=Array.isArray(o.material)?o.material:[o.material];
+  const out=arr.map(m=>{if(!cache.has(m)){const c=convertMat(m);cache.set(m,c);mats.push(c)}return cache.get(m)});
+  o.material=Array.isArray(o.material)?out:out[0]});
+ D('Model meshes:',meshes,'| materials:',mats.length);return mats}
+
+const _v=V3();
+function eachVertex(root,filter,maxPer,cb){root.updateMatrixWorld(true);root.traverse(o=>{if(!o.isMesh||!filter(o)||!o.geometry.attributes.position)return;if(o.skeleton)o.skeleton.update();
+ const n=o.geometry.attributes.position.count,st=Math.max(1,Math.floor(n/maxPer));for(let i=0;i<n;i+=st){o.getVertexPosition(i,_v);_v.applyMatrix4(o.matrixWorld);cb(_v,o)}})}
+const meshName=o=>o.name+' '+((Array.isArray(o.material)?o.material.map(m=>m.name).join(' '):o.material&&o.material.name)||'');
+function partBox(root,re,maxPer=3000){const b=new THREE.Box3();let c=0;eachVertex(root,o=>re.test(meshName(o)),maxPer,v=>{b.expandByPoint(v);c++});return c?b:null}
+const WHEELRE=/rim|tyre|tire|brake|wheel|caliper|disc/i;
+
+function buildCar(model){
+ const root=new THREE.Group(),norm=new THREE.Group();norm.add(model);root.add(norm);scene.add(root);
+ const mats=adjustMaterials(model);model.updateMatrixWorld(true);
+ // --- orientation detection in raw model space ---
+ const raw=new THREE.Box3().setFromObject(model),sz=raw.getSize(V3()),d=[sz.x,sz.y,sz.z];
+ const la=d.indexOf(Math.max(...d)),ua=d.indexOf(Math.min(...d));const ax=i=>[V3(1,0,0),V3(0,1,0),V3(0,0,1)][i];
+ const mid=(raw.min.getComponent(la)+raw.max.getComponent(la))/2,cen=(b)=>b?(b.min.getComponent(la)+b.max.getComponent(la))/2:null;
+ const bf=partBox(model,/Bumper_F/i),bb=partBox(model,/Bumper_B/i),sp=partBox(model,/Spoiler/i),roof=partBox(model,/Roof/i);
+ let fs=1,how='fallback(+axis)';
+ if(bf&&bb){fs=cen(bf)>cen(bb)?1:-1;how='front/rear bumper centres'}else if(sp){fs=cen(sp)>mid?-1:1;how='spoiler position'}
+ if(new URLSearchParams(location.search).get('flip')==='1')fs*=-1;
+ let us=1;const wp=[];model.traverse(o=>{if(/Ani_Wheel_(FL|FR|BL|BR|RL|RR)\d*$/.test(o.name))wp.push(o.getWorldPosition(V3()).getComponent(ua))});
+ if(roof&&wp.length)us=((roof.min.getComponent(ua)+roof.max.getComponent(ua))/2>wp.reduce((a,b)=>a+b,0)/wp.length)?1:-1;
+ const eX=ax(la).multiplyScalar(fs),eY=ax(ua).multiplyScalar(us),eZ=new THREE.Vector3().crossVectors(eX,eY);
+ const M=new THREE.Matrix4().makeBasis(eX,eY,eZ);norm.quaternion.setFromRotationMatrix(M).invert();norm.updateMatrixWorld(true);
+ let B=new THREE.Box3().setFromObject(norm);const s=TARGET_L/(B.max.x-B.min.x);norm.scale.setScalar(s);norm.updateMatrixWorld(true);
+ B.setFromObject(norm);const c=B.getCenter(V3());norm.position.set(-c.x,-B.min.y,-c.z);norm.updateMatrixWorld(true);B.setFromObject(norm);
+ const L=B.max.x-B.min.x,H=B.max.y-B.min.y,W=B.max.z-B.min.z;
+ D('FBX raw size',sz.x.toFixed(2),sz.y.toFixed(2),sz.z.toFixed(2),'| length axis',['x','y','z'][la],'up axis',['x','y','z'][ua],'| front sign',fs,'via',how,'| up sign',us);
+ D('Normalised: L',L.toFixed(2),'W',W.toFixed(2),'H',H.toFixed(2),'m | scale',s.toExponential(3),'| lowest point set to y=0');
+ // --- named parts (car-local metres, root at identity right now) ---
+ const P={wing:partBox(norm,/Spoiler/i),bf:partBox(norm,/Bumper_F/i),bb:partBox(norm,/Bumper_B/i)};
+ D('Parts found by name → Spoiler:',!!P.wing,'Bumper_F:',!!P.bf,'Bumper_B:',!!P.bb,'(names are hints; geometry bounds are used)');
+ if(P.wing){const w=P.wing.getSize(V3());if(w.x>.4*L||w.y>.6*H||P.wing.max.x>-.05*L){D('Spoiler bounds implausible → using proportional fallback');P.wing=null}}
+ if(!P.wing)P.wing=new THREE.Box3(V3(-.46*L,.8*H,-.4*W),V3(-.34*L,.98*H,.4*W));
+ // --- wheels (bone nodes) ---
+ const wheels=[];norm.traverse(o=>{if(/Ani_Wheel_(FL|FR|BL|BR|RL|RR)\d*$/.test(o.name)){const wq=new THREE.Quaternion();o.parent.getWorldQuaternion(wq);const pos=o.getWorldPosition(V3());
+  wheels.push({node:o,q0:o.quaternion.clone(),pq:wq,pqi:wq.clone().invert(),pos,r:clamp(pos.y,.28,.45)})}});
+ D('Wheel nodes found:',wheels.map(w=>w.node.name+'@('+w.pos.x.toFixed(2)+','+w.pos.y.toFixed(2)+','+w.pos.z.toFixed(2)+')').join('; ')||'NONE → wheel rotation unavailable');
+ // --- height field for streamlines ---
+ const nx=64,nz=24,top=new Float32Array(nx*nz).fill(-1),bot=new Float32Array(nx*nz).fill(9),wid=new Float32Array(nx).fill(0);
+ const gi=(x)=>clamp(Math.floor((x-B.min.x)/L*nx),0,nx-1),gk=(z)=>clamp(Math.floor((z-B.min.z)/W*nz),0,nz-1);
+ eachVertex(norm,()=>true,15000,(v,o)=>{const i=gi(v.x),k=gk(v.z),n=meshName(o),wh=WHEELRE.test(n);top[k*nx+i]=Math.max(top[k*nx+i],v.y);if(!wh&&v.y>.05)bot[k*nx+i]=Math.min(bot[k*nx+i],v.y);if(v.y>.2&&!/mirror/i.test(n))wid[i]=Math.max(wid[i],Math.abs(v.z))});
+ const fill=(a,bad)=>{for(let k=0;k<nz;k++){let last=-1;for(let i=0;i<nx;i++)if(!bad(a[k*nx+i])){for(let j=last+1;j<i;j++)a[k*nx+j]=last<0?a[k*nx+i]:lerp(a[k*nx+last],a[k*nx+i],(j-last)/(i-last));last=i}
+  for(let j=last+1;j<nx;j++)if(last>=0)a[k*nx+j]=a[k*nx+last]}};
+ fill(top,v=>v<0);fill(bot,v=>v>8);{let last=-1;for(let i=0;i<nx;i++)if(wid[i]>0){for(let j=last+1;j<i;j++)wid[j]=last<0?wid[i]:lerp(wid[last],wid[i],(j-last)/(i-last));last=i}for(let j=last+1;j<nx;j++)if(last>=0)wid[j]=wid[last]}
+ const smooth=a=>{const c=Float32Array.from(a);for(let k=0;k<nz;k++)for(let i=1;i<nx-1;i++)a[k*nx+i]=(c[k*nx+i-1]+2*c[k*nx+i]+c[k*nx+i+1])/4};smooth(top);smooth(bot);
+ const rows=[];for(let k=0;k<nz;k++){let a=-1,b=-1;for(let i=0;i<nx;i++)if(top[k*nx+i]>.05){if(a<0)a=i;b=i}rows.push([a,b])}
+ const sample=(arr,x,z)=>{const k=gk(z),r=rows[k],i0=r[0]<0?0:r[0],i1=r[1]<0?nx-1:r[1];return arr[k*nx+clamp(gi(x),i0,i1)]};
+ const Hf={top:(x,z)=>sample(top,x,z),bot:(x,z)=>sample(bot,x,z),wid:x=>wid[gi(x)]};
+ root.userData.dims={L,W,H};
+ return {root,norm,model,L,W,H,P,wheels,Hf,mats,box:B.clone(),orient:{la,ua,fs,us}};
+}
+
+/* ================= FX: STREAMLINES, PARTICLES, PRESSURE, ARROWS, CUTAWAY ================= */
+const ribVS=`attribute vec3 other;attribute float side;attribute float a;attribute vec3 col;uniform vec2 uRes;uniform float uW;varying vec3 vC;varying float vA;
+void main(){vec4 p=projectionMatrix*modelViewMatrix*vec4(position,1.);vec4 q=projectionMatrix*modelViewMatrix*vec4(other,1.);
+vec2 sp=p.xy/p.w*uRes,sq=q.xy/q.w*uRes;vec2 d=normalize(sq-sp+vec2(1e-5));vec2 n=vec2(-d.y,d.x);p.xy+=n*side*(uW*.5)/uRes*p.w;vC=col;vA=a;gl_Position=p;}`;
+const ribFS=`uniform float uO;varying vec3 vC;varying float vA;void main(){gl_FragColor=vec4(vC,vA*uO);}`;
+class Ribbons{constructor(max,width){this.max=max;const nv=max*4;this.pos=new Float32Array(nv*3);this.oth=new Float32Array(nv*3);this.side=new Float32Array(nv);this.a=new Float32Array(nv);this.col=new Float32Array(nv*3);
+ const idx=new Uint32Array(max*6);for(let i=0;i<max;i++){const o=i*4;this.side[o]=-1;this.side[o+1]=1;this.side[o+2]=-1;this.side[o+3]=1;idx.set([o,o+1,o+2,o,o+2,o+3],i*6)}
+ const g=this.geo=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(this.pos,3));g.setAttribute('other',new THREE.BufferAttribute(this.oth,3));g.setAttribute('side',new THREE.BufferAttribute(this.side,1));g.setAttribute('a',new THREE.BufferAttribute(this.a,1));g.setAttribute('col',new THREE.BufferAttribute(this.col,3));g.setIndex(new THREE.BufferAttribute(idx,1));
+ this.mat=new THREE.ShaderMaterial({vertexShader:ribVS,fragmentShader:ribFS,transparent:true,depthWrite:false,uniforms:{uRes:{value:new THREE.Vector2(540,960)},uW:{value:width},uO:{value:1}}});this.w0=width;
+ this.mesh=new THREE.Mesh(g,this.mat);this.mesh.frustumCulled=false;this.mesh.renderOrder=5;this.mesh.visible=false;this.n=0}
+ set(i,p,q,a0,a1,c){const o=i*4,P=this.pos,O=this.oth,A=this.a,C=this.col;for(let j=0;j<4;j++){const e=j<2?p:q,f=j<2?q:p,v=o+j,al=j<2?a0:a1;P[v*3]=e[0];P[v*3+1]=e[1];P[v*3+2]=e[2];O[v*3]=f[0];O[v*3+1]=f[1];O[v*3+2]=f[2];A[v]=al;C[v*3]=c[0];C[v*3+1]=c[1];C[v*3+2]=c[2]}}
+ commit(n){this.n=n;this.geo.setDrawRange(0,n*6);for(const k of ['position','other','a','col'])this.geo.attributes[k].needsUpdate=true}
+ res(w,h){this.mat.uniforms.uRes.value.set(w/2,h/2);this.mat.uniforms.uW.value=this.w0*w/1080}}
+const BASE=[.78,.9,1],AMB=[1,.7,.3],CYA=[.31,.82,1];
+let fx=null;
+function buildFX(){
+ const {L,W,H,P,Hf,wheels}=car,g=new THREE.Group();car.root.add(g);const N=40,lines=[];
+ const xa=.8*L,xb=-.95*L,xnose=L/2,tail=-L/2;
+ const smoothArr=(a,n)=>{for(let p=0;p<n;p++){const c=a.slice();for(let i=1;i<a.length-1;i++)a[i]=(c[i-1]+2*c[i]+c[i+1])/4}};
+ const mk=(grp,xs,ys,zs,meta)=>{const pts=new Float32Array(N*3);for(let i=0;i<N;i++){pts[i*3]=xs[i];pts[i*3+1]=ys[i];pts[i*3+2]=zs[i]}lines.push(Object.assign({g:grp,pts},meta))};
+ const lin=(i,a,b)=>a+(b-a)*i/(N-1);
+ // roof / body-top lines hugging the real body height field
+ for(const zf of [-.55,-.25,0,.25,.55]){const z=zf*W/2,xs=[],ys=[],zz=[];for(let i=0;i<N;i++){const x=lin(i,xa,xb),xc=Math.min(x,xnose);let y=Hf.top(xc,z)+.05+.12*sst((xnose-x)/L);if(x>xnose)y=Hf.top(xnose,z)+.16;if(x<tail)y-=.16*sst((tail-x)/(.4*L));xs.push(x);ys.push(y);zz.push(z)}
+  smoothArr(ys,4);for(let i=0;i<N;i++)ys[i]=Math.max(ys[i],Hf.top(clamp(xs[i],xb,xnose),z)+.03);smoothArr(ys,2);mk('top',xs,ys,zz,{zc:Math.abs(zf)})}
+ // side lines
+ for(const sg of [-1,1])for(const lv of [.34,.62]){const xs=[],ys=[],zz=[];for(let i=0;i<N;i++){const x=lin(i,xa,xb),w=Hf.wid(clamp(x,xb,xnose));let z=w+.08+.1*sst((x-xnose)/L);if(x<tail)z-=.25*sst((tail-x)/(.4*L));xs.push(x);zz.push(sg*z);ys.push(lv*H*(1+.15*sst((tail-x)/L)))}
+  smoothArr(zz,3);mk('side',xs,ys,zz,{zc:1})}
+ // under-floor lines incl. explanatory diffuser expansion
+ for(const zf of [-.5,-.2,0,.2,.5]){const z=zf*W/2,xs=[],ys=[],zz=[];for(let i=0;i<N;i++){const x=lin(i,xa,xb);let y=clamp(Hf.bot(clamp(x,xb,xnose),z)-.03,.05,.45);if(x>xnose)y=Math.max(.06,Hf.bot(xnose,z)-.03);
+  y+=.14*sst((-.3*L-x)/(.2*L))+.1*sst((tail-x)/(.4*L));xs.push(x);ys.push(Math.max(.04,y));zz.push(z*(1+.25*sst((tail-x)/(.4*L))))}smoothArr(ys,4);mk('under',xs,ys,zz,{zc:Math.abs(zf)})}
+ // wing lines: deflected UPWARD behind the trailing edge (downforce wing → reaction force on car points down)
+ const wb=P.wing,xle=wb.max.x,xte=wb.min.x,wz=(wb.max.z-wb.min.z)/2;
+ for(const zf of [0,.45,-.45])for(const [dy,hi] of [[.16,1],[.04,1],[-.04,0],[-.16,0]]){const y0=hi?wb.max.y+dy:wb.min.y+dy,xs=[],ys=[],zz=[],x0=xle+.25*L;
+  for(let i=0;i<N;i++){const x=lin(i,x0,xb);let y=y0+(hi?1:-1)*.04*Math.exp(-Math.pow((x-xle)/.12,2))+.3*sst((xte-x)/(.35*L));xs.push(x);ys.push(y);zz.push(zf*wz)}mk('wing',xs,ys,zz,{zc:Math.abs(zf),hi});}
+ // ---- ribbons: static streamlines + animated particle trails (one batched mesh per kind) ----
+ const GR=['top','side','under','wing'],stat={},part={};
+ for(const gname of GR){const ls=lines.filter(l=>l.g===gname);const s=new Ribbons(ls.length*(N-1),2.2);let n=0;
+  for(const l of ls){for(let i=0;i<N-1;i++){const e=i/(N-2);s.set(n++,[l.pts[i*3],l.pts[i*3+1],l.pts[i*3+2]],[l.pts[i*3+3],l.pts[i*3+4],l.pts[i*3+5]],.22*sst(i/6)*(1-.7*e),.22*sst((i+1)/6)*(1-.7*(i+1)/(N-2)),BASE)}}
+  s.commit(n);s.mesh.visible=false;g.add(s.mesh);stat[gname]=s}
+ const PMAX=16;let density=11;const pls={};
+ for(const gname of GR){const ls=lines.filter(l=>l.g===gname);const r=new Ribbons(ls.length*PMAX*3,5);r.ls=ls;g.add(r.mesh);part[gname]=r}
+ // pressure sprites (conceptual)
+ const cv=document.createElement('canvas');cv.width=cv.height=64;const c2=cv.getContext('2d'),gr=c2.createRadialGradient(32,32,0,32,32,32);gr.addColorStop(0,'rgba(255,255,255,.9)');gr.addColorStop(1,'rgba(255,255,255,0)');c2.fillStyle=gr;c2.fillRect(0,0,64,64);
+ const stex=new THREE.CanvasTexture(cv),sprites=[];
+ const addS=(x,y,z,col,sc)=>{const m=new THREE.SpriteMaterial({map:stex,color:col,transparent:true,opacity:0,depthWrite:false});const s=new THREE.Sprite(m);s.position.set(x,y,z);s.scale.setScalar(sc);s.renderOrder=6;g.add(s);sprites.push(s)};
+ addS(xnose+.05,Math.max(.25,Hf.top(xnose-.2,0)*.55),0,0xffb454,.9);addS(0,Hf.top(0,0)+.12,0,0x4fd1ff,1.1);addS(-.12*L,.1,0,0x4fd1ff,.9);
+ addS((wb.min.x+wb.max.x)/2,wb.max.y+.07,0,0xffb454,.8);addS((wb.min.x+wb.max.x)/2,wb.min.y-.07,0,0x4fd1ff,.7);addS(.36*L,Hf.top(.36*L,0)+.05,0,0xffb454,.7);
+ // cutaway section (clearly separate cyan overlay): centre-line underside, road line, diffuser kick, schematic flaps
+ const cut=new Ribbons(220,3.5);const cp=[];
+ for(let i=0;i<48;i++){const x=lerp(.55*L,-.62*L,i/47);let y=clamp(Hf.bot(clamp(x,-L/2,L/2),0),.04,.5);y+=(x<-.3*L)?.12*sst((-.3*L-x)/(.2*L)):0;cp.push([x,y,0])}
+ let cn=0;for(let i=0;i<47;i++)cut.set(cn++,cp[i],cp[i+1],.9,.9,CYA);
+ for(let i=0;i<20;i++){const x0=lerp(.6*L,-.7*L,i/20),x1=lerp(.6*L,-.7*L,(i+.55)/20);cut.set(cn++,[x0,.012,0],[x1,.012,0],.7,.7,BASE)}
+ for(const sgn of [-1,1])for(const [dx,dz,an] of [[0,.22,.35],[-.06*L,.22,.55]]){const x=.36*L+dx,z=sgn*dz*W/2*1.6;cut.set(cn++,[x,.1,z],[x-.2*Math.cos(an),.1-.2*Math.sin(an),z],.9,.9,AMB)}
+ cut.commit(cn);cut.mesh.visible=false;g.add(cut.mesh);
+ // arrows (pointing down; tip at anchor) – shared geometry
+ const cyl=new THREE.CylinderGeometry(.0075*L,.0075*L,1,10).translate(0,.5,0),coneL=.05*L,cone=new THREE.ConeGeometry(.02*L,coneL,14).rotateX(Math.PI).translate(0,coneL/2,0);
+ const mkArrow=(col)=>{const m=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0,depthWrite:false}),grp=new THREE.Group(),sh=new THREE.Mesh(cyl,m),cn2=new THREE.Mesh(cone,m);grp.add(sh,cn2);grp.userData={sh,m};grp.visible=false;grp.renderOrder=7;g.add(grp);return grp};
+ const arrows={net:mkArrow(0xf2f5f8),rear:mkArrow(0xffb454),front:mkArrow(0x4fd1ff),tires:[0,1,2,3].map(()=>mkArrow(0xe8edf2))};
+ const wx=wheels.length>=4?null:[.31*L,-.29*L];const tirePos=[];
+ if(wheels.length>=4)for(const w of wheels.slice(0,4))tirePos.push([w.pos.x,w.pos.z>0?W/2+.12:-W/2-.12]);else for(const x of wx)for(const sg of [-1,1])tirePos.push([x,sg*(W/2+.12)]);
+ const o={g,lines,stat,part,sprites,cut,arrows,tirePos,GR,N,PMAX,
+  setRes(w,h){for(const k of GR){stat[k].res(w,h);part[k].res(w,h)}cut.res(w,h)},setDensity(k){density=Math.min(k,PMAX)},get density(){return density}};
+ return o}
+
+// deterministic per-particle constants (seeded hash – no Math.random during playback)
+const hash=n=>{const x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x)};
+const _c=[0,0,0];
+function ptOn(l,u,out){const f=clamp(u,0,1)*(fx.N-1),i=Math.min(Math.floor(f),fx.N-2),t=f-i,p=l.pts;out[0]=lerp(p[i*3],p[i*3+3],t);out[1]=lerp(p[i*3+1],p[i*3+4],t);out[2]=lerp(p[i*3+2],p[i*3+5],t)}
+const pressure=(l,u)=>{const w=win(u,.22,.35,.6,.75);if(l.g==='wing')return (l.hi?.8:-.8)*w;if(l.g==='side')return .5*(1-sst(u/.15))-.3*w;return (l.zc<.3?.9*(1-sst(u/.15)):0)-(l.g==='under'?.9:.7)*w};
+const P0=[0,0,0],P1=[0,0,0],P2=[0,0,0],P3=[0,0,0];
+function groupOpacity(T){const w=(a,b,c,d)=>win(T,a,b,c,d);
+ const fin=w(69,70,73,75.2)*.6,top=Math.max(w(6.2,7.5,12.8,13.8),.5*w(13,14,20,21.5),w(44,45,50.5,51.5)*.9,fin),
+ side=Math.max(w(6.5,8,12.5,13.5),w(44,45,50.5,51.5)*.8,fin*.6),under=Math.max(.8*w(21.5,23,28.5,29.5),w(29.2,30.2,36.2,37.2),w(44,45,50.5,51.5)*.8,fin*.7),
+ wing=Math.max(w(12.8,14.2,20.5,21.8),w(61,62,66.5,68),w(44,45,50.5,51.5)*.8,fin);return {top,side,under,wing}}
+function updateFX(T){const pose=carPose(T),flowU=pose.flow,on=LAY.flow?1:0,go=groupOpacity(T),pOn=LAY.pressure?win(T,9,10,12.6,13.4)+win(T,15.2,16,20.2,21)+win(T,23,24,28.2,29)+win(T,31.5,32.3,36,36.9):0,pm=clamp(pOn,0,1);
+ for(const k of fx.GR){const o=on*go[k],st=fx.stat[k],pt=fx.part[k];st.mesh.visible=pt.mesh.visible=o>.004;st.mat.uniforms.uO.value=o;pt.mat.uniforms.uO.value=o;if(o<=.004)continue;
+  const ls=pt.ls,nl=ls.length,kk=fx.density;let n=0;
+  for(let j=0;j<kk;j++)for(let li=0;li<nl;li++){const l=ls[li],id=j*97+li*13+(k.length*7),seed=j/kk+.07*hash(id),mul=.85+.3*hash(id+3),u=((seed+flowU*mul)%1+1)%1,tl=.1+.05*hash(id+5);
+   ptOn(l,u,P0);ptOn(l,Math.max(0,u-tl/3),P1);ptOn(l,Math.max(0,u-2*tl/3),P2);ptOn(l,Math.max(0,u-tl),P3);
+   const fade=sst(u/.06)*(1-sst((u-.88)/.12)),pr=pressure(l,u)*pm,c=pr>0?AMB:CYA,m=Math.abs(pr),col=[lerp(BASE[0],c[0],m),lerp(BASE[1],c[1],m),lerp(BASE[2],c[2],m)];
+   pt.set(n++,P0,P1,.95*fade,.65*fade,col);pt.set(n++,P1,P2,.65*fade,.35*fade,col);pt.set(n++,P2,P3,.35*fade,0,col)}
+  pt.commit(n)}
+ // pressure sprites
+ fx.sprites.forEach((s,i)=>{s.material.opacity=.55*pm*(i===2?.8:1)});
+ // cutaway ghosting + overlay
+ const cw=LAY.cut?Math.max(win(T,26.4,27.4,28.6,29.4)*.7,win(T,29.8,30.8,36.2,37.1)):0;fx.cut.mesh.visible=cw>.01;fx.cut.mat.uniforms.uO.value=cw;car.cutaway=cw;
+ const op=1-.62*cw;for(const m of car.mats){if(/tyre|tire|rim|brake/i.test(m.name))continue;const tr=cw>.01||m.userData.baseTransp;if(m.transparent!==tr){m.transparent=tr;m.depthWrite=!(cw>.01);m.needsUpdate=true}m.opacity=m.userData.baseOpacity*op}
+ updateArrows(T)}
+
+function setArrow(a,on,len,x,y,z,up){a.visible=on>.01;if(!a.visible)return;a.position.set(x,y,z);a.rotation.x=up?Math.PI:0;a.userData.m.opacity=clamp(on,0,1);const cl=.05*car.L,l=Math.max(len*car.L,cl*1.2);a.userData.sh.scale.y=l-cl;a.userData.sh.position.y=cl}
+function vecState(T){const k=Math.pow(speedMs(T)*3.6/100,2);let r={a:0,l:.3},f={a:0,l:.2};
+ if(T<21.5){r.a=win(T,13.8,15,20.2,21.4);r.l=.3*lerp(.6,1,sst((T-14)/3))}
+ else if(T<29.5){f.a=win(T,21.8,23,28.4,29.4);f.l=.22*(.5+.5*sst((T-22)/3));r.a=.45*win(T,23,24,28,29)}
+ else if(T<37.2){}
+ else if(T<44.2){const bad=1-sst((T-40.4)/.8);r.a=f.a=win(T,37.3,38,43.4,44.2);r.l=lerp(.3,.42,bad);f.l=lerp(.28,.07,bad)}
+ else if(T<51.5){r.a=f.a=win(T,44.2,45,50.4,51.5);r.l=.07*k;f.l=.045*k}
+ else if(T>=62&&T<68.5){r.a=win(T,62,63,67,68.5);r.l=.34}
+ else if(T>=69){r.a=f.a=win(T,69.5,71,74,75.6);r.l=.3;f.l=.24}
+ return {r,f,net:win(T,4.2,5,6.8,7.6),tire:win(T,69.5,71,74,75.6)}}
+function updateArrows(T){const A=fx.arrows,{L,Hf,P}=car,s=vecState(T),e=LAY.vec?1:0,wc=(P.wing.min.x+P.wing.max.x)/2;
+ setArrow(A.net,s.net*e,.2,0,Hf.top(0,0)+.01,0,false);
+ setArrow(A.rear,s.r.a*e,s.r.l,wc,P.wing.max.y+.01,0,false);
+ setArrow(A.front,s.f.a*e,s.f.l,.36*L,Hf.top(.36*L,0)+.01,0,false);
+ const tl=.1+.05*sst((T-70)/3);A.tires.forEach((a,i)=>setArrow(a,s.tire*e,tl,fx.tirePos[i][0],.02,fx.tirePos[i][1],true))}
+
+/* ================= STATE APPLICATION (everything derives from T) ================= */
+let prevCar=V3(),lastExp=0;
+const _a=V3(),_b=V3();
+function applyState(T){const pose=carPose(T),root=car.root;root.position.set(pose.x,0,pose.z);root.rotation.y=pose.h;root.updateMatrixWorld(true);
+ for(const w of car.wheels){const ang=-pose.dist/w.r;const qz=new THREE.Quaternion().setFromAxisAngle(V3(0,0,1),ang);w.node.quaternion.copy(w.pqi).multiply(qz).multiply(w.pq).multiply(w.q0)}
+ ground.position.set(Math.round(pose.x/TILE)*TILE,0,Math.round(pose.z/TILE)*TILE);
+ sun.position.set(pose.x+SUN_OFF.x,SUN_OFF.y,pose.z+SUN_OFF.z);sun.target.position.set(pose.x,0,pose.z);sun.target.updateMatrixWorld();
+ const sc=sceneAt(T);renderer.toneMappingExposure=.95-.18*win(T,29.5,31,36,37.2)+.05*win(T,68,70,75,76);
+ const carW=root.localToWorld(_a.set(0,car.H*.4,0));
+ if(!S.inspect){const k=camKey(T),L=car.L;let p=[k.p[0]*L,k.p[1]*L,k.p[2]*L];
+  const hl=L*.56,hw=car.W/2+.3;if(Math.abs(p[0])<hl&&p[1]<car.H+.15&&Math.abs(p[2])<hw)p[2]=(p[2]<0?-1:1)*hw; p[1]=Math.max(p[1],.12);
+  camera.position.copy(root.localToWorld(_b.set(p[0],p[1],p[2])));const t=root.localToWorld(V3(k.q[0]*L,k.q[1]*L,k.q[2]*L));camera.fov=k.fov;camera.updateProjectionMatrix();camera.lookAt(t);controls.target.copy(t)}
+ else{const d=carW.clone().sub(prevCar);camera.position.add(d);controls.target.add(d);controls.update()}
+ prevCar.copy(carW);
+ updateFX(T);if(car.helpers)car.helpers.visible=S.inspect&&!rec.on}
+
+/* ================= 2D OVERLAY (captions, labels, data cards – baked into the video) ================= */
+let k2=1;
+function txt(s,x,y,size,o={}){ctx2.save();ctx2.globalAlpha=o.a??1;ctx2.font=`${o.w||700} ${size*k2}px "Arial Narrow","Helvetica Neue",Arial,sans-serif`;ctx2.textAlign=o.align||'center';ctx2.textBaseline=o.bl||'middle';
+ if(o.sh!==false){ctx2.shadowColor='rgba(0,0,0,.65)';ctx2.shadowBlur=10*k2}ctx2.fillStyle=o.c||'#fff';if(o.ls)ctx2.letterSpacing=o.ls*k2+'px';ctx2.fillText(s,x,y);ctx2.restore()}
+function wrap(s,maxW,size){ctx2.font=`700 ${size*k2}px "Arial Narrow","Helvetica Neue",Arial,sans-serif`;const w=s.split(' '),out=[];let l='';for(const t of w){const n=l?l+' '+t:t;if(ctx2.measureText(n).width>maxW&&l){out.push(l);l=t}else l=n}out.push(l);return out}
+function rr(x,y,w,h,r,fill){ctx2.beginPath();ctx2.roundRect(x,y,w,h,r*k2);ctx2.fillStyle=fill;ctx2.fill()}
+const LBL=[
+ {t:'REAR WING',w:[14,15,20,21],a:()=>[(car.P.wing.min.x+car.P.wing.max.x)/2,car.P.wing.max.y,car.P.wing.max.z*.6]},
+ {t:'DOWNFORCE',w:[14.8,16,20,21],a:()=>[(car.P.wing.min.x+car.P.wing.max.x)/2,car.P.wing.max.y+.25*car.L*.3,0],c:'#ffb454'},
+ {t:'FRONT SPLITTER',w:[23.2,24.2,28,28.8],a:()=>[car.L/2-.02,.06,0]},
+ {t:'ACTIVE FRONT FLAPS (schematic)',w:[27,27.6,28.6,29.2],a:()=>[.36*car.L,.1,.3*car.W],c:'#ffb454'},
+ {t:'UNDERBODY FLOW',w:[30.2,31,34,35],a:()=>[-.05*car.L,.08,0],c:'#4fd1ff'},
+ {t:'DIFFUSER',w:[33.4,34.2,36.2,36.9],a:()=>[-.46*car.L,.12,0],c:'#4fd1ff'},
+ {t:'FRONT LOAD',w:[38,38.8,43.2,43.9],a:()=>[.36*car.L,car.Hf.top(.36*car.L,0)+.2,0],c:'#4fd1ff'},
+ {t:'REAR LOAD',w:[38,38.8,43.2,43.9],a:()=>[(car.P.wing.min.x+car.P.wing.max.x)/2,car.P.wing.max.y+.25,0],c:'#ffb454'},
+ {t:'TIRE LOAD',w:[70,71,74,75.4],a:()=>[fx.tirePos[0][0],.3,fx.tirePos[0][1]]}];
+const _p=V3();
+function drawLabels(T,W,H){if(!LAY.label)return;for(const l of LBL){const al=win(T,...l.w);if(al<.02)continue;const a=l.a();_p.set(a[0],a[1],a[2]);car.root.localToWorld(_p);_p.project(camera);if(_p.z>1||_p.z<-1)continue;
+  const x=(_p.x*.5+.5)*W,y=(-_p.y*.5+.5)*H,dir=x<W/2?-1:1,bx=clamp(x+dir*170*k2,.14*W,.86*W),by=clamp(y-110*k2,.08*H,.9*H),col=l.c||'#fff';
+  ctx2.save();ctx2.globalAlpha=al;ctx2.strokeStyle=col;ctx2.lineWidth=2.5*k2;ctx2.beginPath();ctx2.moveTo(x,y);ctx2.lineTo(bx,by);ctx2.stroke();ctx2.beginPath();ctx2.arc(x,y,6*k2,0,7);ctx2.fillStyle=col;ctx2.fill();ctx2.restore();
+  txt(l.t,bx,by-22*k2,34,{a:al,c:col,ls:3})}}
+function panel(W,H,al,title){ctx2.save();ctx2.globalAlpha=al;rr(.07*W,.045*H,.86*W,.215*H,16,'rgba(8,12,18,.62)');ctx2.restore();txt(title,.5*W,.062*H,24,{a:al*.8,c:'#9fb0c0',ls:3})}
+function inset(kind,T,W,H,al){if(al<.02)return;const flow=carPose(T).flow,X=.07*W,Y=.045*H,w=.86*W,h=.215*H;panel(W,H,al,kind==='wing'?'SCHEMATIC · NOT TO SCALE':kind==='front'?'SCHEMATIC · ILLUSTRATIVE FRONT AERO':'SCHEMATIC · NOT A CFD RESULT');
+ ctx2.save();ctx2.globalAlpha=al;ctx2.lineCap='round';const P=(fx,fy)=>[X+fx*w,Y+fy*h],path=(pts,c,lw,dash)=>{ctx2.beginPath();pts.forEach((p,i)=>{const q=P(p[0],p[1]);i?ctx2.lineTo(q[0],q[1]):ctx2.moveTo(q[0],q[1])});ctx2.strokeStyle=c;ctx2.lineWidth=lw*k2;ctx2.setLineDash(dash?[14*k2,16*k2]:[]);ctx2.lineDashOffset=dash?-flow*600*k2:0;ctx2.stroke()};
+ const stream=(y0,bend)=>{const pts=[];for(let i=0;i<=20;i++){const x=i/20;pts.push([.08+x*.84,y0-bend*sst((x-.45)/.45)-.03*Math.exp(-Math.pow((x-.4)/.12,2))*Math.sign(bend||1)])}return pts};
+ if(kind==='wing'){for(const [yy,b] of [[.2,.14],[.34,.14],[.66,.12],[.8,.12]])path(stream(yy,b),'#cfe8ff',3,true);
+  for(const [cx,cy,rot] of [[.42,.5,-.22],[.55,.46,-.3]]){ctx2.save();const c=P(cx,cy);ctx2.translate(c[0],c[1]);ctx2.rotate(rot);ctx2.beginPath();ctx2.ellipse(0,0,.1*w,.024*h,0,0,7);ctx2.fillStyle='#2a323b';ctx2.fill();ctx2.strokeStyle='#ffffff';ctx2.lineWidth=3*k2;ctx2.setLineDash([]);ctx2.stroke();ctx2.restore()}
+  const a0=P(.5,.18),a1=P(.5,.4);ctx2.strokeStyle='#ffb454';ctx2.fillStyle='#ffb454';ctx2.lineWidth=7*k2;ctx2.setLineDash([]);ctx2.beginPath();ctx2.moveTo(a0[0],a0[1]);ctx2.lineTo(a1[0],a1[1]-12*k2);ctx2.stroke();ctx2.beginPath();ctx2.moveTo(a1[0]-16*k2,a1[1]-18*k2);ctx2.lineTo(a1[0]+16*k2,a1[1]-18*k2);ctx2.lineTo(a1[0],a1[1]);ctx2.fill();
+  txt('AIR PUSHED UP',...P(.78,.5),26,{c:'#cfe8ff'});txt('FORCE ON CAR: DOWN',...P(.28,.12),26,{c:'#ffb454'});txt('TWO PROFILES',...P(.5,.93),24,{c:'#fff',a:.85})}
+ else if(kind==='front'){path([[.1,.62],[.55,.62],[.7,.5],[.92,.45]],'#fff',4);path([[.1,.7],[.45,.7]],'#4fd1ff',6);
+  path([[.5,.7],[.6,.78]],'#ffb454',6);path([[.58,.7],[.68,.8]],'#ffb454',6);for(const yy of [.25,.42])path(stream(yy,.02),'#cfe8ff',3,true);path(stream(.86,-.06).map(p=>[p[0],p[1]-.06]),'#cfe8ff',3,true);
+  txt('SPLITTER',...P(.2,.55),24,{c:'#4fd1ff'});txt('FLAPS',...P(.66,.92),24,{c:'#ffb454'});txt('AIR MANAGED AROUND THE NOSE',...P(.55,.12),24)}
+ else{path([[.1,.6],[.62,.6],[.78,.46],[.92,.38]],'#fff',4);path([[.05,.86],[.95,.86]],'#8b95a1',3);for(const yy of [.68,.76]){const pts=[];for(let i=0;i<=20;i++){const x=i/20;pts.push([.06+x*.88,yy-.22*sst((x-.6)/.3)*(yy<.7?1:.7)])}path(pts,'#4fd1ff',3,true)}
+  txt('UNDERBODY',...P(.3,.5),24,{c:'#4fd1ff'});txt('DIFFUSER',...P(.84,.28),24,{c:'#4fd1ff'});txt('FLOW EXPANDS & RECOVERS',...P(.5,.14),24)}
+ ctx2.restore()}
+function drawOverlays(T){const W=view.width,H=view.height;k2=W/1080;ctx2.drawImage(glc,0,0,W,H);
+ const sc=sceneAt(T),sd=SCENES[sc];
+ // hook
+ const hk=win(T,4.2,4.8,6.4,7.2);if(hk>.01)txt('THE AIR PUSHES IT DOWN.',W/2,.15*H,74,{a:hk,ls:2});
+ // schematic insets
+ if(LAY.label||true){inset('wing',T,W,H,win(T,13.8,14.6,20,20.8));inset('front',T,W,H,win(T,21.8,22.6,28,28.8));inset('floor',T,W,H,win(T,29.8,30.6,36,36.8))}
+ // scene 6 balance wording
+ if(T>=37&&T<44.3){const bad=1-sst((T-40.4)/.8),al=win(T,37.6,38.4,43.4,44.2);rr(.12*W,.08*H,.76*W,.075*H,14,`rgba(8,12,18,${.6*al})`);txt(bad>.5?'POORLY BALANCED (ILLUSTRATIVE)':'BETTER BALANCED (ILLUSTRATIVE)',W/2,.118*H,34,{a:al,c:bad>.5?'#ffb454':'#4fd1ff',ls:2});
+  txt('NOT A VERIFIED FRONT/REAR SPLIT',W/2,.17*H,24,{a:al*.8,c:'#9fb0c0'})}
+ // scene 7 diagram + speed
+ const a7=win(T,44.6,45.6,50.4,51.2);if(a7>.01){ctx2.save();ctx2.globalAlpha=a7;rr(.07*W,.045*H,.86*W,.24*H,16,'rgba(8,12,18,.62)');ctx2.restore();
+  txt('F = ½ ρ v² A C',W/2,.075*H,52,{a:a7,ls:2});const kmh=speedMs(T)*3.6,f=Math.pow(kmh/100,2),bx=.12*W,bw=.76*W;
+  ctx2.save();ctx2.globalAlpha=a7;rr(bx,.205*H,bw*.25,.012*H,6,'#8b95a1');rr(bx,.205*H,bw*clamp(f/4,.02,1)*.98+.0,.012*H,6,'rgba(255,180,84,.95)');ctx2.restore();
+  txt(`${Math.round(kmh)} km/h  →  ${f.toFixed(1)}× force`,W/2,.18*H,40,{a:a7,c:'#ffb454'});txt('100 km/h = 1×   ·   200 km/h ≈ 4×',W/2,.235*H,28,{a:a7});txt('SIMPLIFIED · SAME CONDITIONS · NOT JESKO DATA',W/2,.262*H,22,{a:a7*.8,c:'#9fb0c0'})}
+ // scene 8 data cards
+ const cards=[[52.4,'250 km/h','700 kg downforce',.09],[55.9,'290 km/h','1,000 kg downforce',.20]];
+ for(const [t0,a,b,yy] of cards){const al=win(T,t0,t0+.7,60,60.7);if(al<.01)continue;ctx2.save();ctx2.globalAlpha=al;rr(.12*W,yy*H,.76*W,.095*H,16,'rgba(8,12,18,.66)');ctx2.restore();ctx2.save();ctx2.globalAlpha=al;rr(.12*W,yy*H,.008*W,.095*H,4,'#4fd1ff');ctx2.restore();
+  txt(a,W*.2,(yy+.032)*H,34,{a:al,align:'left',c:'#9fb0c0'});txt(b,W*.2,(yy+.067)*H,50,{a:al,align:'left'})}
+ const a8=win(T,52.4,53,60,60.7);if(a8>.01)txt('MANUFACTURER-PUBLISHED FIGURES · KOENIGSEGG',W/2,.31*H,22,{a:a8*.85,c:'#9fb0c0',ls:1});
+ // scene 9
+ const a9=win(T,60.6,61.6,67.4,68.2);if(a9>.01){ctx2.save();ctx2.globalAlpha=a9;rr(.07*W,.06*H,.86*W,.2*H,16,'rgba(8,12,18,.62)');ctx2.restore();txt('MAXIMUM PUBLISHED DOWNFORCE',W/2,.088*H,32,{a:a9,c:'#9fb0c0',ls:2});txt('1,400 KG',W/2,.15*H,120,{a:a9});
+  txt('Manufacturer-stated downforce, expressed as kg-equivalent force.',W/2,.23*H,23,{a:a9*.9,c:'#cfd8e0'})}
+ // scene 10 payoff text
+ const a10=win(T,72.6,73.8,76.5,77);if(a10>.01){ctx2.save();ctx2.globalAlpha=a10;rr(.08*W,.06*H,.84*W,.2*H,16,'rgba(8,12,18,.55)');ctx2.restore();['MORE SPEED.','MORE DOWNFORCE.','MORE POTENTIAL GRIP.'].forEach((s,i)=>txt(s,W/2,(.09+i*.06)*H,62,{a:a10,c:i==2?'#ffb454':'#fff'}))}
+ drawLabels(T,W,H);
+ // captions
+ let cue=null;for(const c of sd.cues)if(T>=c[0]&&T<c[1])cue=c;
+ if(cue){const al=sst((T-cue[0])/.25)*(1-sst((T-cue[1]+.25)/.25)),ls=wrap(cue[2],.84*W,46),y0=.72*H;ctx2.save();ctx2.globalAlpha=al;const bh=(ls.length*58+30)*k2;rr(.07*W,y0-bh/2,.86*W,bh,18,'rgba(6,9,13,.62)');ctx2.restore();ls.forEach((s,i)=>txt(s,W/2,y0+(i-(ls.length-1)/2)*58*k2,46,{a:al,sh:false}))}
+ if(LAY.simple){const ls=wrap(sd.simple,.8*W,30);ls.forEach((s,i)=>txt(s,W/2,.80*H+i*38*k2,30,{c:'#ffd9a0',w:600}))}}
+
+/* ================= AUDIO (procedural; not a Jesko recording) ================= */
+const A={ctx:null,muted:true,vol:.6};
+function initAudio(){if(A.ctx)return;const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=A.ctx=new C();
+ A.master=c.createGain();A.master.gain.value=0;const comp=c.createDynamicsCompressor();A.master.connect(comp);comp.connect(c.destination);A.dest=c.createMediaStreamDestination();comp.connect(A.dest);
+ const lp=A.engLP=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=500;A.engG=c.createGain();A.engG.gain.value=0;lp.connect(A.engG);A.engG.connect(A.master);
+ A.osc=[['sawtooth',1,.5],['sawtooth',2.01,.25],['square',.5,.35],['triangle',3,.12]].map(([t,m,g])=>{const o=c.createOscillator();o.type=t;const gg=c.createGain();gg.gain.value=g;o.connect(gg);gg.connect(lp);o.start();return {o,m}});
+ const lfo=c.createOscillator(),ld=c.createGain();lfo.frequency.value=14;ld.gain.value=.25;lfo.connect(ld);ld.connect(A.engG.gain);lfo.start();A.lfo=lfo;
+ const nb=c.createBuffer(1,c.sampleRate*2,c.sampleRate),d=nb.getChannelData(0);let s=1;for(let i=0;i<d.length;i++){s=(s*16807)%2147483647;d[i]=s/1073741823-1}
+ const noise=(type,f,q)=>{const n=c.createBufferSource();n.buffer=nb;n.loop=true;const fl=c.createBiquadFilter();fl.type=type;fl.frequency.value=f;fl.Q.value=q;const g=c.createGain();g.gain.value=0;n.connect(fl);fl.connect(g);g.connect(A.master);n.start();return {fl,g}};
+ A.wind=noise('bandpass',700,.7);A.road=noise('lowpass',260,.5);
+ const th=c.createOscillator();th.frequency.value=48;A.thG=c.createGain();A.thG.gain.value=0;th.connect(A.thG);A.thG.connect(A.master);th.start();
+ const tk=c.createOscillator();tk.frequency.value=1760;A.tkG=c.createGain();A.tkG.gain.value=0;tk.connect(A.tkG);A.tkG.connect(A.master);tk.start()}
+const TICKS=[4.4,27,52.4,55.9,60.6];
+function audioUpdate(T){if(!A.ctx)return;const c=A.ctx,t=c.currentTime,set=(p,v,tc=.06)=>p.setTargetAtTime(v,t,tc),pl=S.playing&&!rec.paused,v=speedMs(T),bs=SCENES.map(s=>s.t0).slice(1);
+ set(A.master.gain,(A.muted?0:A.vol)*.8,.05);const f=34+v*1.5;A.osc.forEach(o=>set(o.o.frequency,f*o.m,.08));set(A.lfo.frequency,f/4);set(A.engLP.frequency,350+v*18);set(A.engG.gain,pl?.16:0);
+ set(A.wind.g.gain,pl?.07*Math.pow(v/50,2):0);set(A.wind.fl.frequency,500+v*14);set(A.road.g.gain,pl?.1*v/50:0);
+ let th=0;for(const b of bs)if(T>=b&&T<b+1.2)th=Math.max(th,Math.exp(-(T-b)*3.2));set(A.thG.gain,pl?.35*th:0,.02);
+ let tk=0;for(const b of TICKS)if(T>=b&&T<b+.4)tk=Math.max(tk,Math.exp(-(T-b)*9));set(A.tkG.gain,pl?.03*tk:0,.01)}
+
+/* ================= PLAYBACK / CLOCK ================= */
+function seek(t){S.T=clamp(t,0,DUR);S.tRef=S.T;S.wall0=performance.now();speakCheck(true)}
+function play(){if(S.T>=DUR-.01)seek(0);S.playing=true;S.tRef=S.T;S.wall0=performance.now();$('play').textContent='Pause';if(A.ctx&&A.ctx.state==='suspended')A.ctx.resume();if(S.narr&&speechSynthesis.paused)speechSynthesis.resume()}
+function pause(){S.playing=false;$('play').textContent='Play';if(window.speechSynthesis)speechSynthesis.pause()}
+function speakCheck(force){if(!S.narr||!window.speechSynthesis)return;const i=sceneAt(S.T);if(force||i!==S.sceneIdx){speechSynthesis.cancel();if(S.playing){const u=new SpeechSynthesisUtterance(SCENES[i].say);u.rate=1.05;speechSynthesis.speak(u)}}}
+function tick(){const now=performance.now();if(S.playing){S.T=S.tRef+(now-S.wall0)/1000*S.speed;if(S.T>=DUR){S.T=DUR;pause();if(rec.on)finishRecordingSoon()}}}
+
+/* ================= RECORDING ================= */
+function pickMime(){const c=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];return window.MediaRecorder?c.find(m=>MediaRecorder.isTypeSupported(m))||'':''}
+function rstat(s){$('rs').textContent=s}
+async function startRecording(){if(rec.on)return;if(!view.captureStream||!window.MediaRecorder){rstat('Recording is not supported in this browser (needs canvas.captureStream + MediaRecorder).');return}
+ const mime=pickMime();if(!mime){rstat('No supported MediaRecorder format found.');return}
+ initAudio();if(A.ctx&&A.ctx.state==='suspended')await A.ctx.resume();
+ rec.prevQ=quality;applyQuality($('rq').value);S.speed=1;$('spd').value='1';seek(0);
+ const stream=view.captureStream(30);let audio=false;if(A.dest){A.dest.stream.getAudioTracks().forEach(t=>{stream.addTrack(t);audio=true})}
+ let mr;try{mr=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:$('rq').value==='high'?10e6:4e6})}catch(e){rstat('Recorder error: '+e.message);applyQuality(rec.prevQ);return}
+ rec.chunks=[];rec.mr=mr;rec.mime=mime;rec.stream=stream;mr.ondataavailable=e=>{if(e.data&&e.data.size)rec.chunks.push(e.data)};
+ mr.onerror=e=>{rstat('Recording error: '+(e.error&&e.error.message||'unknown'));cleanupRec()};
+ mr.onstop=()=>{const blob=new Blob(rec.chunks,{type:mime.split(';')[0]}),url=URL.createObjectURL(blob),ext=mime.includes('mp4')?'mp4':'webm',a=document.createElement('a');a.href=url;a.download='jesko-attack-downforce.'+ext;document.body.appendChild(a);a.click();a.remove();
+  rstat(`Saved ${ext.toUpperCase()} (${(blob.size/1048576).toFixed(1)} MB, ${view.width}×${view.height}, ${mime}). Browser download started. Audio: ${audio&&!A.muted?'included (procedural)':'silent track – sound was off'}.`);setTimeout(()=>URL.revokeObjectURL(url),60000);cleanupRec()};
+ rec.on=true;$('rec').setAttribute('aria-pressed','true');$('rec').textContent='Stop recording';rstat(`Recording ${view.width}×${view.height} as ${mime}… ${audio?(A.muted?'(sound is off → silent audio)':''):'(audio capture unavailable)'}`);
+ mr.start(500);play()}
+function finishRecordingSoon(){if(rec.ending)return;rec.ending=true;setTimeout(()=>{if(rec.mr&&rec.mr.state!=='inactive')rec.mr.stop()},600)}
+function cleanupRec(){rec.on=false;rec.ending=false;if(rec.stream)rec.stream.getTracks().forEach(t=>t.stop());rec.stream=null;rec.mr=null;rec.chunks=null;$('rec').setAttribute('aria-pressed','false');$('rec').textContent='Record video';if(rec.prevQ)applyQuality(rec.prevQ)}
+
+/* ================= DIAGNOSTICS ================= */
+function diagText(){const k=camKey(S.T);return ['t='+S.T.toFixed(2)+'s  scene '+(sceneAt(S.T)+1)+': '+SCENES[sceneAt(S.T)].n,'camera (L units) fwd/up/right '+k.p.map(v=>v.toFixed(2)).join(' / ')+'  fov '+k.fov.toFixed(1),'quality '+quality+' '+view.width+'x'+view.height+'  particles/line '+fx.density,'--- assets / model ---',...diag.lines,...diag.errors,'Procedural (not factory geometry): streamlines, pressure blobs, arrows, cutaway section, flap schematic, inset schematics.'].join('\n')}
+function setupHelpers(){const g=new THREE.Group(),b=new THREE.Box3Helper(car.box,0xffff00),ax=new THREE.AxesHelper(2),ar=new THREE.ArrowHelper(V3(1,0,0),V3(0,.05,0),car.L*.7,0x00ff88);g.add(b,ax,ar,new THREE.GridHelper(20,20,0x444444,0x222222));car.root.add(g);g.visible=false;car.helpers=g}
+
+/* ================= UI ================= */
+function buildUI(){
+ $('chips').innerHTML=SCENES.map((s,i)=>`<button data-s="${i}" title="${s.n}">${i+1}</button>`).join('');
+ $('chips').onclick=e=>{const b=e.target.closest('button');if(b)seek(SCENES[+b.dataset.s].t0+.05)};
+ $('play').onclick=()=>{S.playing?pause():play()};$('restart').onclick=()=>{seek(0);play()};
+ const sc=$('scrub');sc.addEventListener('input',()=>{S.scrubbing=true;seek(sc.value/1000)});sc.addEventListener('change',()=>{S.scrubbing=false});
+ document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{const k=b.dataset.k,on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);
+  if(k==='inspect'){S.inspect=on;controls.enabled=on;view.style.touchAction=on?'none':'pan-y';if(on)controls.update();else resetCam();$('dbg').style.display=on?'block':'none'}else LAY[k]=on?1:0});
+ $('rcam').onclick=resetCam;
+ $('snd').onclick=()=>{initAudio();A.muted=!A.muted;$('snd').setAttribute('aria-pressed',!A.muted);$('snd').textContent=A.muted?'Sound off':'Sound on';if(A.ctx&&A.ctx.state==='suspended')A.ctx.resume()};
+ $('vol').oninput=e=>{A.vol=+e.target.value};
+ $('say').onclick=()=>{S.narr=!S.narr;$('say').setAttribute('aria-pressed',S.narr);if(S.narr)speakCheck(true);else if(window.speechSynthesis)speechSynthesis.cancel()};
+ $('qual').onchange=e=>applyQuality(e.target.value);$('spd').onchange=e=>{S.speed=+e.target.value;S.tRef=S.T;S.wall0=performance.now()};
+ $('rec').onclick=()=>{if(rec.on){if(rec.mr&&rec.mr.state!=='inactive')rec.mr.stop()}else startRecording()};
+ document.addEventListener('visibilitychange',()=>{if(rec.on)return;if(document.hidden){S.hidWas=S.playing;if(S.playing)pause()}else if(S.hidWas){S.hidWas=false;play()}});
+ addEventListener('beforeunload',()=>{renderer.dispose();if(rec.mr&&rec.mr.state!=='inactive')rec.mr.stop()});
+}
+function resetCam(){S.inspect=false;controls.enabled=false;view.style.touchAction='pan-y';document.querySelector('[data-k=inspect]').setAttribute('aria-pressed','false');$('dbg').style.display='none'}
+function updateDOM(){const T=S.T,i=sceneAt(T);$('tm').textContent=fmt(T)+' / '+fmt(DUR);if(!S.scrubbing)$('scrub').value=Math.round(T*1000);
+ if(i!==S.sceneIdx){speakCheck(false);S.sceneIdx=i;$('scn').textContent='Scene '+String(i+1).padStart(2,'0')+' · '+SCENES[i].n;document.querySelectorAll('#chips button').forEach((b,j)=>b.style.borderColor=j===i?'var(--cy)':'')}
+ if(S.inspect&&(performance.now()-lastExp>250)){lastExp=performance.now();$('dbg').textContent=diagText()}}
+
+/* ================= MAIN ================= */
+function frame(){requestAnimationFrame(frame);if(!car)return;tick();applyState(S.T);renderer.render(scene,camera);drawOverlays(S.T);audioUpdate(S.T);updateDOM()}
+async function main(){buildUI();applyQuality(quality);
+ try{const {model,hdr,glb}=await loadAssets();setupEnvironment(hdr);setupGround(glb);car=buildCar(model);fx=buildFX();setupHelpers();applyQuality(quality);
+  const sh=new THREE.Mesh(new THREE.PlaneGeometry(car.L*1.15,car.W*1.5),new THREE.MeshBasicMaterial({map:(()=>{const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d'),g=x.createRadialGradient(64,64,6,64,64,64);g.addColorStop(0,'rgba(0,0,0,.8)');g.addColorStop(1,'rgba(0,0,0,0)');x.fillStyle=g;x.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})(),transparent:true,opacity:.7,depthWrite:false}));
+  sh.rotation.x=-Math.PI/2;sh.position.y=.006;car.root.add(sh); // contact-shadow blob under the car
+  $('load').style.display='none';D('All assets loaded. Errors:',diag.errors.length);window.__jesko={S,seek,play,pause,car,fx,diag};frame()}
+ catch(e){console.error(e);$('ls').textContent='Load failed';$('err').textContent+=(e&&e.stack||e)+'\n\nServe this folder over HTTP (python3 -m http.server 8000) and keep all files from the manifest next to index.html.'}}
+main();
+</script>
+</body>
+</html>
